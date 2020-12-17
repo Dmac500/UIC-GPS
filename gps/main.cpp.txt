@@ -1,0 +1,446 @@
+/*main.cpp*/
+
+//
+// 
+// References:
+// TinyXML: https://github.com/leethomason/tinyxml2
+// OpenStreetMap: https://www.openstreetmap.org
+// OpenStreetMap docs:  
+//   https://wiki.openstreetmap.org/wiki/Main_Page
+//   https://wiki.openstreetmap.org/wiki/Map_Features
+//   https://wiki.openstreetmap.org/wiki/Node
+//   https://wiki.openstreetmap.org/wiki/Way
+//   https://wiki.openstreetmap.org/wiki/Relation
+//
+
+#include <iostream>
+#include <iomanip>  /*setprecision*/
+#include <string>
+#include <vector>
+#include <map>
+#include <cstdlib>
+#include <cstring>
+#include <cassert>
+#include <limits>
+#include <queue>
+
+#include "tinyxml2.h"
+#include "dist.h"
+#include "osm.h"
+#include "graph.h"
+
+using namespace std;
+using namespace tinyxml2;
+
+
+//////////////////////////////////////////////////////////////////
+//
+// main
+class prioritize
+{
+public:
+bool operator()(const pair<long long, double>& p1,const pair<long long, double>& p2)
+{
+   if(p1.second == p2.second)
+   {
+    return p1.first > p2.first;
+   }
+   
+   return p1.second > p2.second;
+    
+}
+};
+
+
+
+double INF= numeric_limits<double>::max();
+
+ bool findBuilding (string build, int size, vector<BuildingInfo> Buildings, int& index ){
+   
+     for(int i = 0; i < size;i++)
+     {
+
+        string Abbrev =Buildings.at(i).Abbrev;
+      
+         if(Abbrev == build )
+         {
+
+
+             index = i;
+             return true;
+       
+        } 
+                  
+       
+     }
+     
+     for(int i = 0; i < size;i++)
+     {
+
+       string Fullname = Buildings.at(i).Fullname;
+        
+
+      
+                if(Fullname.find(build) != string::npos )
+                   {
+                    index = i;
+                    //cout << Fullname << endl;
+                    return true;
+                   } 
+     }
+                  
+       
+    return false ;
+ }
+
+void MakeData(int index , vector<BuildingInfo> Buildings ,double& lat , double& lon)
+{
+    
+        string Fullname = Buildings.at(index).Fullname;
+         lat = Buildings.at(index).Coords.Lat;
+        lon = Buildings.at(index).Coords.Lon;
+    
+            cout <<"  " << Fullname <<endl;
+            cout << " (" << lat << ", "<< lon << ")";
+    
+    
+}
+
+long long nearestFootWay(vector<FootwayInfo> Footways ,map<long long, Coordinates>  Nodes,double Lat, double Lon ,double& NewLat, double& Newlon  )
+{
+    long long smallest;
+    double test = 100.00;
+    
+    
+    
+     for(int p = 0;p < Footways.size();p++)
+    {
+      FootwayInfo foot; //= Footways[p];
+       foot.Nodes = Footways[p].Nodes;
+       //foot.Nodes = Footways[p].Nodes;
+        
+      for( int e = 0; e < foot.Nodes.size() ;e++)
+      {
+        
+        long long second = foot.Nodes.at(e);
+           
+
+         
+            double  secondLat   = Nodes.at(second).Lat;
+            double  secondLon   = Nodes.at(second).Lon;
+          
+          
+        double dis =  distBetween2Points(Lat, Lon , secondLat , secondLon );
+        
+          if (dis < test )
+          {
+              test = dis;
+              smallest = Nodes.at(second).ID;
+              NewLat = secondLat;
+              Newlon = secondLon;
+          }
+      }
+     }
+    return smallest;
+}
+
+void Dijkstra(graph<long long,double>& G, 
+ long long startV, 
+  long long endV,
+  map<long long,double>& distances ,
+  map<long long,long long>& predecessors)
+{
+  vector<long long>  visited;
+  set <long long> visitedset;
+  set<long long> nab;
+  vector<long long>  getVert = G.getVertices();
+  int size = G.NumVertices();
+    priority_queue <pair<long long,double>,
+    vector<pair<long long,double>>
+        ,prioritize >  Pr;
+    
+    
+  for(int i = 0; i < getVert.size(); i++)// for each vertex in the graph. 
+  {
+      distances[getVert[i]]= INF;
+      Pr.push(make_pair(getVert[i],INF));
+      predecessors.insert(make_pair(getVert[i] , 0));
+  }
+    
+  distances[startV]= 0;
+  Pr.push(make_pair(startV,0));
+  
+  while(!Pr.empty())
+  {
+    double alt;
+     auto p = Pr.top();//currentV
+     Pr.pop();
+     
+     if(p.second == INF)
+     {
+        break;
+     }
+     else if(visitedset.count(p.first) != 0)
+     {
+        continue;
+     }
+     else 
+     {
+        visitedset.insert(p.first);
+        visited.push_back(p.first);
+        nab = G. neighbors(p.first);
+        for(long long e : nab)
+        {
+           double weight;
+           G.getWeight(p.first,e,weight);
+           alt = p.second + weight;
+           if(alt < distances[e])
+           {
+              distances[e] = alt;
+              Pr.push(make_pair(e , alt));
+              predecessors[e] = p.first;
+           }
+        }
+     }
+     
+     
+  }
+
+ 
+}
+
+
+
+    
+int main()
+{
+  map<long long, Coordinates>  Nodes;     // maps a Node ID to it's coordinates (lat, lon)
+  vector<FootwayInfo>          Footways;  // info about each footway, in no particular order
+  vector<BuildingInfo>         Buildings; // info about each building, in no particular order
+  XMLDocument                  xmldoc;
+  
+  cout << "** Navigating UIC open street map **" << endl;
+  cout << endl;
+  cout << std::setprecision(8);
+
+  string def_filename = "map.osm";
+  string filename;
+
+  cout << "Enter map filename> ";
+  getline(cin, filename);
+
+  if (filename == "")
+  {
+    filename = def_filename;
+  }
+
+  //
+  // Load XML-based map file 
+  //
+  if (!LoadOpenStreetMap(filename, xmldoc))
+  {
+    cout << "**Error: unable to load open street map." << endl;
+    cout << endl;
+    return 0;
+  }
+  
+  //
+  // Read the nodes, which are the various known positions on the map:
+  //
+  int nodeCount = ReadMapNodes(xmldoc, Nodes);
+
+  //
+  // Read the footways, which are the walking paths:
+  //
+  int footwayCount = ReadFootways(xmldoc, Footways);
+
+  //
+  // Read the university buildings:
+  //
+  int buildingCount = ReadUniversityBuildings(xmldoc, Nodes, Buildings);
+
+  //
+  // Stats
+  //
+  assert(nodeCount == Nodes.size());
+  assert(footwayCount == Footways.size());
+  assert(buildingCount == Buildings.size());
+
+  cout << endl;
+  cout << "# of nodes: " << Nodes.size() << endl;
+  cout << "# of footways: " << Footways.size() << endl;
+  cout << "# of buildings: " << Buildings.size() << endl;
+
+
+  //
+  // TODO: build the graph, output stats:
+  //
+  graph<long long, double> G;
+    for(auto p: Nodes)
+    {
+     long long ID = p.first;
+      
+      G.addVertex(ID);
+        
+    }
+  
+    for(int p = 0;p < Footways.size();p++)
+    {
+      FootwayInfo foot; //= Footways[p];
+       foot.Nodes = Footways[p].Nodes;
+       //foot.Nodes = Footways[p].Nodes;
+        
+      for( int e = 0; e < foot.Nodes.size() - 1;e++)
+      {
+          
+         
+          
+          
+        long long first = foot.Nodes.at(e);
+        long long second = foot.Nodes.at(e+1);
+           
+
+            double  firstLat = Nodes.at( first).Lat;
+            double  firstLon = Nodes.at( first).Lon;
+            double  secondLat   = Nodes.at(second).Lat;
+            double  secondLon   = Nodes.at(second).Lon;
+          
+          
+        double dis =  distBetween2Points(firstLat, firstLon , secondLat , secondLon );
+          G.addEdge(first ,  second, dis);
+          G.addEdge(second , first, dis); // this is to add the edges
+        
+     }
+    }
+
+  cout << "# of vertices: " << G.NumVertices() << endl;
+  cout << "# of edges: " << G.NumEdges() << endl;
+  cout << endl;
+
+  //
+  // Navigation from building to building
+  //
+int size = Buildings.size();
+   int vecSpotStart;
+   int vecSpotStop;
+   double startlat;
+   double newstartlon;
+   double newstartLat;
+   double startlon;
+    
+   double endLat;
+   double endLon;
+   double newendLat;
+   double newendLon;
+   long long startID;
+    long long endID;
+    
+    
+  string startBuilding, destBuilding;
+
+  cout << "Enter start (partial name or abbreviation), or #> ";
+  getline(cin, startBuilding);
+
+  while (startBuilding != "#")
+  {
+    cout << "Enter destination (partial name or abbreviation)> ";
+    getline(cin, destBuilding);
+      
+      
+      
+    if (findBuilding(startBuilding,size,Buildings ,vecSpotStart) == true && findBuilding(destBuilding,size,Buildings,vecSpotStop) == true)
+    { 
+        
+        cout << "Starting point:" << endl ;
+          MakeData(vecSpotStart,Buildings , startlat , startlon );
+        cout << endl; 
+        
+        cout << "Destination point:" << endl ;
+          MakeData(vecSpotStop,Buildings , endLat, endLon );
+        
+        startID = nearestFootWay(Footways , Nodes,startlat, startlon ,newstartLat, newstartlon );
+        endID = nearestFootWay(Footways , Nodes, endLat, endLon , newendLat, newendLon );
+        
+        cout << endl << endl;
+        cout <<"Nearest start node:"<< endl;
+        
+         cout <<" " << startID <<endl;
+            cout << " (" << newstartLat << ", "<< newstartlon << ")" <<endl;
+         
+        cout <<"Nearest Destination node:"<< endl;
+        
+         cout <<"  " << endID <<endl;
+            cout << " (" << newendLat << ", "<< newendLon << ")"<<endl; 
+      cout << endl;
+          cout << "Navigating with Dijkstra..."<< endl ;
+        map<long long , double>Distance;
+        map<long long  , long long > predecessors;
+        //double distanceFromEachOther = distBetween2Points(newstartLat,newstartlon,newendLat,newendLon );
+        //cout << "distance to dest: "<< distanceFromEachOther<< " miles"<< endl;
+      
+        
+   Dijkstra(G , startID , endID, Distance , predecessors);
+      if(Distance[endID] == INF)
+      {
+        cout << "Sorry, destination unreachable"<< endl; 
+        
+      }
+      else {
+             cout << "distance to dest: "<< Distance[endID] << " miles"<< endl;
+
+        vector<long long> Path;
+        vector<long long> REALPath;
+        long long cur = endID;
+         Path.push_back(cur);
+        while(cur != startID)
+        {
+            // cout << cur << endl;
+            
+           cur = predecessors[cur];
+             Path.push_back(cur);
+       }
+      
+        cout << "Path: ";
+       for(int i = Path.size()-1 ; i > 0 ; i--)
+        {
+            cout<< Path[i] << "->";
+        }
+      cout<< Path[0];
+      }
+        
+    }
+    else if (findBuilding(startBuilding,size,Buildings,vecSpotStart) == false ){
+        cout<< "Start building not found"<< endl;
+     }
+      else 
+      {
+           cout<< "Destination building not found"<< endl;
+      }
+      
+      
+
+    //
+    // TODO: lookup buildings, find nearest start and dest nodes,
+    // run Dijkstra's alg, output distance and path to destination:
+    //
+
+
+    //cout << "Start building not found" << endl;
+    //cout << "Destination building not found" << endl;
+
+
+    //
+    // another navigation?
+    //
+    cout << endl;
+    cout << "Enter start (partial name or abbreviation), or #> ";
+    getline(cin, startBuilding);
+  }
+
+  //
+  // done:
+  //
+  cout << "** Done **" << endl;
+
+  return 0;
+}
